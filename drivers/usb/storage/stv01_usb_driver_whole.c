@@ -1820,6 +1820,51 @@ static void usb_stor_ufi_command(struct scsi_cmnd *srb, struct us_data *us)
 	usb_stor_invoke_transport(srb, us);
 }
 
+/* Release all our dynamic resources */
+static void usb_stor_release_resources(struct us_data *us)
+{
+	/* Tell the control thread to exit.  The SCSI host must
+	 * already have been removed and the DISCONNECTING flag set
+	 * so that we won't accept any more commands.
+	 */
+	usb_stor_dbg(us, "-- sending exit command to thread\n");
+	complete(&us->cmnd_ready);
+	if (us->ctl_thread)
+		kthread_stop(us->ctl_thread);
+
+	/* Call the destructor routine, if it exists */
+	if (us->extra_destructor) {
+		usb_stor_dbg(us, "-- calling extra_destructor()\n");
+		us->extra_destructor(us->extra);
+	}
+
+	/* Free the extra data and the URB */
+	kfree(us->extra);
+	usb_free_urb(us->current_urb);
+}
+
+/* Dissociate from the USB device */
+static void dissociate_dev(struct us_data *us)
+{
+	/* Free the buffers */
+	kfree(us->cr);
+	usb_free_coherent(us->pusb_dev, US_IOBUF_SIZE, us->iobuf, us->iobuf_dma);
+
+	/* Remove our private data from the interface */
+	usb_set_intfdata(us->pusb_intf, NULL);
+}
+
+/* Second stage of disconnect processing: deallocate all resources */
+static void release_everything(struct us_data *us)
+{
+	usb_stor_release_resources(us);
+	dissociate_dev(us);
+
+	/* Drop our reference to the host; the SCSI core will free it
+	 * (and "us" along with it) when the refcount becomes 0. */
+	scsi_host_put(us_to_host(us));
+}
+
 /* First part of general USB mass-storage probing */
 static int usb_stor_probe1( struct us_data **pus,
 		                        struct usb_interface *intf,
@@ -2253,6 +2298,138 @@ static void usb_stor_stop_transport(struct us_data *us)
 	}
 }
 
+
+void usb_stor_host_template_init(struct scsi_host_template *sht,
+				 const char *name, struct module *owner)
+{
+	*sht = usb_stor_host_template;
+	sht->name = name;
+	sht->proc_name = name;
+	sht->module = owner;
+}
+
+/* First stage of disconnect processing: stop SCSI scanning,
+ * remove the host, and stop accepting new commands
+ */
+static void quiesce_and_remove_host(struct us_data *us)
+{
+	struct Scsi_Host *host = us_to_host(us);
+
+	/* If the device is really gone, cut short reset delays */
+	if (us->pusb_dev->state == USB_STATE_NOTATTACHED) {
+		set_bit(US_FLIDX_DISCONNECTING, &us->dflags);
+		wake_up(&us->delay_wait);
+	}
+
+	/* Prevent SCSI scanning (if it hasn't started yet)
+	 * or wait for the SCSI-scanning routine to stop.
+	 */
+	cancel_delayed_work_sync(&us->scan_dwork);
+
+	/* Balance autopm calls if scanning was cancelled */
+	if (test_bit(US_FLIDX_SCAN_PENDING, &us->dflags))
+		usb_autopm_put_interface_no_suspend(us->pusb_intf);
+
+	/* Removing the host will perform an orderly shutdown: caches
+	 * synchronized, disks spun down, etc.
+	 */
+	scsi_remove_host(host);
+
+	/* Prevent any new commands from being accepted and cut short
+	 * reset delays.
+	 */
+	scsi_lock(host);
+	set_bit(US_FLIDX_DISCONNECTING, &us->dflags);
+	scsi_unlock(host);
+	wake_up(&us->delay_wait);
+}
+
+/* Handle a USB mass-storage disconnect */
+static void usb_stor_disconnect(struct usb_interface *intf)
+{
+	struct us_data *us = usb_get_intfdata(intf);
+
+	quiesce_and_remove_host(us);
+	release_everything(us);
+}
+
+static int usb_stor_suspend(struct usb_interface *iface, pm_message_t message)
+{
+	struct us_data *us = usb_get_intfdata(iface);
+
+	/* Wait until no command is running */
+	mutex_lock(&us->dev_mutex);
+
+	if (us->suspend_resume_hook)
+		(us->suspend_resume_hook)(us, US_SUSPEND);
+
+	/* When runtime PM is working, we'll set a flag to indicate
+	 * whether we should autoresume when a SCSI request arrives. */
+
+	mutex_unlock(&us->dev_mutex);
+	return 0;
+}
+
+static int usb_stor_resume(struct usb_interface *iface)
+{
+	struct us_data *us = usb_get_intfdata(iface);
+
+	mutex_lock(&us->dev_mutex);
+
+	if (us->suspend_resume_hook)
+		(us->suspend_resume_hook)(us, US_RESUME);
+
+	mutex_unlock(&us->dev_mutex);
+	return 0;
+}
+
+/* Report a driver-initiated bus reset to the SCSI layer.
+ * Calling this for a SCSI-initiated reset is unnecessary but harmless.
+ * The caller must not own the SCSI host lock. */
+static void usb_stor_report_bus_reset(struct us_data *us)
+{
+	struct Scsi_Host *host = us_to_host(us);
+
+	scsi_lock(host);
+	scsi_report_bus_reset(host, 0);
+	scsi_unlock(host);
+}
+
+static int usb_stor_pre_reset(struct usb_interface *iface)
+{
+	struct us_data *us = usb_get_intfdata(iface);
+
+	/* Make sure no command runs during the reset */
+	mutex_lock(&us->dev_mutex);
+	return 0;
+}
+
+static int usb_stor_reset_resume(struct usb_interface *iface)
+{
+	struct us_data *us = usb_get_intfdata(iface);
+
+	/* Report the reset to the SCSI core */
+	usb_stor_report_bus_reset(us);
+
+	/* FIXME: Notify the subdrivers that they need to reinitialize
+	 * the device */
+	return 0;
+}
+
+static int usb_stor_post_reset(struct usb_interface *iface)
+{
+	struct us_data *us = usb_get_intfdata(iface);
+
+	/* Report the reset to the SCSI core */
+	usb_stor_report_bus_reset(us);
+
+	/* FIXME: Notify the subdrivers that they need to reinitialize
+	 * the device */
+
+	mutex_unlock(&us->dev_mutex);
+	return 0;
+}
+
 /* The main probe routine for standard devices */
 static int storage_probe(struct usb_interface *intf,
 			 const struct usb_device_id *id)
@@ -2297,24 +2474,16 @@ static int storage_probe(struct usb_interface *intf,
 	return result;
 }
 
-/*
+static struct usb_driver stv01_driver = {
+	.name =		DRV_NAME,
+	.probe =	storage_probe,
 	.disconnect =	usb_stor_disconnect,
 	.suspend =	usb_stor_suspend,
 	.resume =	usb_stor_resume,
 	.reset_resume =	usb_stor_reset_resume,
 	.pre_reset =	usb_stor_pre_reset,
 	.post_reset =	usb_stor_post_reset,
-*/
-static struct usb_driver stv01_driver = {
-	.name =		DRV_NAME,
-	.probe =	storage_probe,
-	.disconnect     =	IPTR(usm)->disconnect,
-	.suspend        =	IPTR(usm)->suspend,
-	.resume         =	IPTR(usm)->resume,
-	.reset_resume   =	IPTR(usm)->reset_resume,
-	.pre_reset      =	IPTR(usm)->pre_reset,
-    .post_reset     =	IPTR(usm)->post_reset,
-	.id_table       =	stv01_usb_ids,
+	.id_table =	stv01_usb_ids,
 	.supports_autosuspend = 1,
 	.soft_unbind =	1
 };

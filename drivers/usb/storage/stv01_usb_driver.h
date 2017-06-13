@@ -40,8 +40,8 @@
  * 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-#ifndef _USB_H_
-#define _USB_H_
+#ifndef _STV01_USB_DRIVER_H_
+#define _STV01_USB_DRIVER_H_
 
 #include <linux/usb.h>
 #include <linux/usb_usual.h>
@@ -206,4 +206,4 @@ static void __exit __driver##_exit(void) \
 } \
 module_exit(__driver##_exit)
 
-#endif
+#endif /// _STV01_USB_DRIVER_H_
