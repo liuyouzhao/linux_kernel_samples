@@ -4,6 +4,8 @@
 #include <linux/pm.h>
 #include <linux/usb.h>
 
+#include "stv01_utils.h"
+
 /**
  * pm_message_t declared in linux/pm.h
  * usb_interface declared in linux/usb.h
@@ -18,5 +20,7 @@ typedef struct stv01_usb_storage_method_s
     int (*post_reset)   (struct usb_interface *);
 
 } stv01_usb_storage_method_t;
+
+EXTERN_PTR(stv01_usb_storage_method_t, usm)
 
 #endif /// _STV01_USB_STORAGE_H_

@@ -22,6 +22,8 @@
 #include <scsi/scsi_devinfo.h>
 
 #include "stv01_usb_driver.h"
+#include "stv01_usb_storage.h"
+#include "stv01_utils.h"
 
 #define USUAL_DEV(use_protocol, use_transport) \
 { \
@@ -1820,6 +1822,51 @@ static void usb_stor_ufi_command(struct scsi_cmnd *srb, struct us_data *us)
 	usb_stor_invoke_transport(srb, us);
 }
 
+/* Release all our dynamic resources */
+static void usb_stor_release_resources(struct us_data *us)
+{
+	/* Tell the control thread to exit.  The SCSI host must
+	 * already have been removed and the DISCONNECTING flag set
+	 * so that we won't accept any more commands.
+	 */
+	usb_stor_dbg(us, "-- sending exit command to thread\n");
+	complete(&us->cmnd_ready);
+	if (us->ctl_thread)
+		kthread_stop(us->ctl_thread);
+
+	/* Call the destructor routine, if it exists */
+	if (us->extra_destructor) {
+		usb_stor_dbg(us, "-- calling extra_destructor()\n");
+		us->extra_destructor(us->extra);
+	}
+
+	/* Free the extra data and the URB */
+	kfree(us->extra);
+	usb_free_urb(us->current_urb);
+}
+
+/* Dissociate from the USB device */
+static void dissociate_dev(struct us_data *us)
+{
+	/* Free the buffers */
+	kfree(us->cr);
+	usb_free_coherent(us->pusb_dev, US_IOBUF_SIZE, us->iobuf, us->iobuf_dma);
+
+	/* Remove our private data from the interface */
+	usb_set_intfdata(us->pusb_intf, NULL);
+}
+
+/* Second stage of disconnect processing: deallocate all resources */
+static void release_everything(struct us_data *us)
+{
+	usb_stor_release_resources(us);
+	dissociate_dev(us);
+
+	/* Drop our reference to the host; the SCSI core will free it
+	 * (and "us" along with it) when the refcount becomes 0. */
+	scsi_host_put(us_to_host(us));
+}
+
 /* First part of general USB mass-storage probing */
 static int usb_stor_probe1( struct us_data **pus,
 		                        struct usb_interface *intf,
@@ -2253,6 +2300,15 @@ static void usb_stor_stop_transport(struct us_data *us)
 	}
 }
 
+void usb_stor_host_template_init(struct scsi_host_template *sht,
+				 const char *name, struct module *owner)
+{
+	*sht = usb_stor_host_template;
+	sht->name = name;
+	sht->proc_name = name;
+	sht->module = owner;
+}
+
 /* The main probe routine for standard devices */
 static int storage_probe(struct usb_interface *intf,
 			 const struct usb_device_id *id)
@@ -2297,6 +2353,36 @@ static int storage_probe(struct usb_interface *intf,
 	return result;
 }
 
+int suspend(struct usb_interface *iface, pm_message_t message)
+{
+    return IPTR(usm)->suspend(iface, message);
+}
+
+int resume(struct usb_interface *iface)
+{
+    return IPTR(usm)->resume(iface);
+}
+
+void disconnect(struct usb_interface *intf)
+{
+    IPTR(usm)->disconnect(intf);
+}
+
+int reset_resume(struct usb_interface *iface)
+{
+    return IPTR(usm)->reset_resume(iface);
+}
+
+int pre_reset(struct usb_interface *iface)
+{
+    return IPTR(usm)->pre_reset(iface);
+}
+
+int post_reset(struct usb_interface *iface)
+{
+    return IPTR(usm)->post_reset(iface);
+}
+
 /*
 	.disconnect =	usb_stor_disconnect,
 	.suspend =	usb_stor_suspend,
@@ -2306,14 +2392,14 @@ static int storage_probe(struct usb_interface *intf,
 	.post_reset =	usb_stor_post_reset,
 */
 static struct usb_driver stv01_driver = {
-	.name =		DRV_NAME,
-	.probe =	storage_probe,
-	.disconnect     =	IPTR(usm)->disconnect,
-	.suspend        =	IPTR(usm)->suspend,
-	.resume         =	IPTR(usm)->resume,
-	.reset_resume   =	IPTR(usm)->reset_resume,
-	.pre_reset      =	IPTR(usm)->pre_reset,
-    .post_reset     =	IPTR(usm)->post_reset,
+	.name           =		DRV_NAME,
+	.probe          =	storage_probe,
+	.disconnect     =	disconnect,
+	.suspend        =	suspend,
+	.resume         =	resume,
+	.reset_resume   =	reset_resume,
+	.pre_reset      =	pre_reset,
+    .post_reset     =	post_reset,
 	.id_table       =	stv01_usb_ids,
 	.supports_autosuspend = 1,
 	.soft_unbind =	1
