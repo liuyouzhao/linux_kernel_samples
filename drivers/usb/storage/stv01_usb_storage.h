@@ -12,6 +12,7 @@
 */
 typedef struct stv01_usb_storage_method_s
 {
+    int (*probe)        (struct usb_interface *, const struct usb_device_id *);
     int (*suspend)      (struct usb_interface *, pm_message_t);
     int (*resume)       (struct usb_interface *);
     void (*disconnect)  (struct usb_interface *);

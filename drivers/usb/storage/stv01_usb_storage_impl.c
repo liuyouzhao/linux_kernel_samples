@@ -78,14 +78,14 @@ void INTERVAL_IMPL __usb_storage_disconnect_impl(struct stv01_usb_data_s *us)
 	 * already have been removed and the DISCONNECTING flag set
 	 * so that we won't accept any more commands.
 	 */
-	utils_device_dbg(&us->pusb_dev->dev, "-- sending exit command to thread\n");
+	utils_device_dbg(us, "-- sending exit command to thread\n");
 	complete(&us->cmnd_ready);
 	if (us->ctl_thread)
 		kthread_stop(us->ctl_thread);
 
 	/* Call the destructor routine, if it exists */
 	if (us->extra_destructor) {
-		utils_device_dbg(&us->pusb_dev->dev, "-- calling extra_destructor()\n");
+		utils_device_dbg(us, "-- calling extra_destructor()\n");
 		us->extra_destructor(us->extra);
 	}
 

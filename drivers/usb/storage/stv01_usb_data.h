@@ -4,6 +4,7 @@
 #include <linux/usb.h>
 #include <scsi/scsi_host.h>
 
+struct us_unusual_dev;
 /** we allocate one of these for every device that we remember
 */
 typedef struct stv01_usb_data_s {
@@ -17,7 +18,7 @@ typedef struct stv01_usb_data_s {
 	struct usb_interface	*pusb_intf;	 /* this interface */
 
 
-	//struct us_unusual_dev   *unusual_dev;	 /* device-filter entry     */
+	struct us_unusual_dev   *unusual_dev;	 /* device-filter entry     */
 
 
 	unsigned long		fflags;		 /* fixed flags from filter */
@@ -94,6 +95,25 @@ static inline struct Scsi_Host *us_to_host(struct stv01_usb_data_s *us) {
 	return container_of((void *) us, struct Scsi_Host, hostdata);
 }
 
+static inline struct stv01_usb_data_s *host_to_us(struct Scsi_Host *host) {
+	return (struct stv01_usb_data_s *) host->hostdata;
+}
 
+static inline const char* host_info(struct Scsi_Host *host)
+{
+	struct stv01_usb_data_s *us = host_to_us(host);
+	return us->scsi_name;
+}
+
+static inline void utils_device_dbg(const struct stv01_usb_data_s *us, const char *fmt, ...)
+{
+	va_list args;
+
+	va_start(args, fmt);
+
+	dev_vprintk_emit(LOGLEVEL_DEBUG, &us->pusb_dev->dev, fmt, args);
+
+	va_end(args);
+}
 #endif /// _STV01_USB_DATA_H_
 
