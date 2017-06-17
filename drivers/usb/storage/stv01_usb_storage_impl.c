@@ -70,50 +70,6 @@ void INTERVAL_IMPL __usb_storage_disconnect_impl(struct stv01_usb_data_s *us)
 	set_bit(US_FLIDX_DISCONNECTING, &us->dflags);
 	scsi_unlock(host);
 	wake_up(&us->delay_wait);
-
-    /**
-        Release resource begin
-    */
-    /* Tell the control thread to exit.  The SCSI host must
-	 * already have been removed and the DISCONNECTING flag set
-	 * so that we won't accept any more commands.
-	 */
-	utils_device_dbg(us, "-- sending exit command to thread\n");
-	complete(&us->cmnd_ready);
-	if (us->ctl_thread)
-		kthread_stop(us->ctl_thread);
-
-	/* Call the destructor routine, if it exists */
-	if (us->extra_destructor) {
-		utils_device_dbg(us, "-- calling extra_destructor()\n");
-		us->extra_destructor(us->extra);
-	}
-
-	/* Free the extra data and the URB */
-	kfree(us->extra);
-	usb_free_urb(us->current_urb);
-    /*
-        Release resource end
-    */
-
-
-    /*
-        Dissociate from the USB device
-    */
-	/* Free the buffers */
-	kfree(us->cr);
-	usb_free_coherent(us->pusb_dev, US_IOBUF_SIZE, us->iobuf, us->iobuf_dma);
-
-	/* Remove our private data from the interface */
-	usb_set_intfdata(us->pusb_intf, NULL);
-    /*
-        Dissociate from the USB device end
-    */
-
-
-	/* Drop our reference to the host; the SCSI core will free it
-	 * (and "us" along with it) when the refcount becomes 0. */
-	scsi_host_put(us_to_host(us));
 }
 
 /* Report a driver-initiated bus reset to the SCSI layer.
