@@ -371,34 +371,12 @@ int usb_stor_probe2(struct stv01_usb_data_s *us)
 	int result;
 	struct device *dev = &us->pusb_intf->dev;
 
-	/* Make sure the transport and protocol have both been set */
-	if (!us->transport_command || !us->protocol_command) {
-		result = -ENXIO;
-		goto BadDevice;
-	}
-	utils_device_dbg(us, "Transport: %s\n", us->transport_name);
-	utils_device_dbg(us, "Protocol: %s\n", us->protocol_name);
+	
+	/* In the normal case there is only a single target */
+	us_to_host(us)->max_id = 1;
 
-	if (us->fflags & US_FL_SCM_MULT_TARG) {
-		/*
-		 * SCM eUSCSI bridge devices can have different numbers
-		 * of LUNs on different targets; allow all to be probed.
-		 */
-		us->max_lun = 7;
-		/* The eUSCSI itself has ID 7, so avoid scanning that */
-		us_to_host(us)->this_id = 7;
-		/* max_id is 8 initially, so no need to set it here */
-	} else {
-		/* In the normal case there is only a single target */
-		us_to_host(us)->max_id = 1;
-		/*
-		 * Like Windows, we won't store the LUN bits in CDB[1] for
-		 * SCSI-2 devices using the Bulk-Only transport (even though
-		 * this violates the SCSI spec).
-		 */
-		if (us->transport_command == usb_stor_Bulk_transport)
-			us_to_host(us)->no_scsi2_lun_in_cdb = 1;
-	}
+    us_to_host(us)->no_scsi2_lun_in_cdb = 1;
+	
 
 	/* fix for single-lun devices */
 	if (us->fflags & US_FL_SINGLE_LUN)
