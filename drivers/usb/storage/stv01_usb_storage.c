@@ -15,7 +15,6 @@
 #include "stv01_usb_storage.h"
 #include "stv01_usb_data.h"
 #include "stv01_usb_device.h"
-#include "stv01_usb_command.h"
 #include "stv01_usb_transport.h"
 #include "stv01_scsi_host.h"
 #include "stv01_urb.h"
@@ -285,6 +284,29 @@ static int associate_dev(struct stv01_usb_data_s *us, struct usb_interface *intf
 	return 0;
 }
 
+/* Initialize all the dynamic resources we need */
+static int usb_stor_acquire_resources(struct stv01_usb_data_s *us)
+{
+	struct task_struct *th;
+
+	us->current_urb = usb_alloc_urb(0, GFP_KERNEL);
+	if (!us->current_urb) {
+		utils_device_dbg(us, "URB allocation failed\n");
+		return -ENOMEM;
+	}
+
+	/* Start up our control thread */
+	th = kthread_run(stv01_kernel_thread, us, "usb-storage");
+	if (IS_ERR(th)) {
+		dev_warn(&us->pusb_intf->dev,
+				"Unable to start control thread\n");
+		return PTR_ERR(th);
+	}
+	us->ctl_thread = th;
+
+	return 0;
+}
+
 /* First part of general USB mass-storage probing */
 static int usb_stor_probe1(     struct stv01_usb_data_s **pus,
 		                        struct usb_interface *intf,
@@ -343,85 +365,6 @@ BadDevice:
 	return result;
 }
 
-/* Get the pipe settings */
-static int get_pipes(struct stv01_usb_data_s *us)
-{
-	struct usb_host_interface *altsetting =
-		us->pusb_intf->cur_altsetting;
-	int i;
-	struct usb_endpoint_descriptor *ep;
-	struct usb_endpoint_descriptor *ep_in = NULL;
-	struct usb_endpoint_descriptor *ep_out = NULL;
-	struct usb_endpoint_descriptor *ep_int = NULL;
-
-	/*
-	 * Find the first endpoint of each type we need.
-	 * We are expecting a minimum of 2 endpoints - in and out (bulk).
-	 * An optional interrupt-in is OK (necessary for CBI protocol).
-	 * We will ignore any others.
-	 */
-	for (i = 0; i < altsetting->desc.bNumEndpoints; i++) {
-		ep = &altsetting->endpoint[i].desc;
-
-		if (usb_endpoint_xfer_bulk(ep)) {
-			if (usb_endpoint_dir_in(ep)) {
-				if (!ep_in)
-					ep_in = ep;
-			} else {
-				if (!ep_out)
-					ep_out = ep;
-			}
-		}
-
-		else if (usb_endpoint_is_int_in(ep)) {
-			if (!ep_int)
-				ep_int = ep;
-		}
-	}
-
-	if (!ep_in || !ep_out || (us->protocol == USB_PR_CBI && !ep_int)) {
-		utils_device_dbg(us, "Endpoint sanity check failed! Rejecting dev.\n");
-		return -EIO;
-	}
-
-	/* Calculate and store the pipe values */
-	us->send_ctrl_pipe = usb_sndctrlpipe(us->pusb_dev, 0);
-	us->recv_ctrl_pipe = usb_rcvctrlpipe(us->pusb_dev, 0);
-	us->send_bulk_pipe = usb_sndbulkpipe(us->pusb_dev,
-		usb_endpoint_num(ep_out));
-	us->recv_bulk_pipe = usb_rcvbulkpipe(us->pusb_dev,
-		usb_endpoint_num(ep_in));
-	if (ep_int) {
-		us->recv_intr_pipe = usb_rcvintpipe(us->pusb_dev,
-			usb_endpoint_num(ep_int));
-		us->ep_bInterval = ep_int->bInterval;
-	}
-	return 0;
-}
-
-/* Initialize all the dynamic resources we need */
-static int usb_stor_acquire_resources(struct stv01_usb_data_s *us)
-{
-	struct task_struct *th;
-
-	us->current_urb = usb_alloc_urb(0, GFP_KERNEL);
-	if (!us->current_urb) {
-		utils_device_dbg(us, "URB allocation failed\n");
-		return -ENOMEM;
-	}
-
-	/* Start up our control thread */
-	th = kthread_run(stv01_kernel_thread, us, "usb-storage");
-	if (IS_ERR(th)) {
-		dev_warn(&us->pusb_intf->dev,
-				"Unable to start control thread\n");
-		return PTR_ERR(th);
-	}
-	us->ctl_thread = th;
-
-	return 0;
-}
-
 /* Second part of general USB mass-storage probing */
 int usb_stor_probe2(struct stv01_usb_data_s *us)
 {
@@ -462,7 +405,7 @@ int usb_stor_probe2(struct stv01_usb_data_s *us)
 		us->max_lun = 0;
 
 	/* Find the endpoints and calculate pipe values */
-	result = get_pipes(us);
+	result = IPTR(dim)->get_pipes(us);
 	if (result)
 		goto BadDevice;
 

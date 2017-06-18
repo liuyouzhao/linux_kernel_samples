@@ -18,10 +18,11 @@ struct stv01_usb_data_s;
 */
 typedef struct stv01_usb_device_method_s
 {
-    int (*get_info) ( struct stv01_usb_data_s *us,
-                      const struct usb_device_id *id );
-    void (*get_protocol)(struct stv01_usb_data_s *us);
-    void (*get_transport)(struct stv01_usb_data_s *us);
+    int (*get_info)         ( struct stv01_usb_data_s *us,
+                                const struct usb_device_id *id );
+    void (*get_protocol)    (struct stv01_usb_data_s *us);
+    void (*get_transport)   (struct stv01_usb_data_s *us);
+    int (*get_pipes)       (struct stv01_usb_data_s *us);
 
 } stv01_usb_device_method_t;
 

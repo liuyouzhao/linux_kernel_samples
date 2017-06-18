@@ -1,5 +1,4 @@
 #include "stv01_usb_device.h"
-#include "stv01_usb_command.h"
 #include "stv01_usb_transport.h"
 #include "stv01_usb_data.h"
 #include <linux/utsname.h>
@@ -142,11 +141,68 @@ static void get_device_transport(struct stv01_usb_data_s *us)
 
 }
 
+/* Get the pipe settings */
+static int get_device_pipes(struct stv01_usb_data_s *us)
+{
+	struct usb_host_interface *altsetting =
+		us->pusb_intf->cur_altsetting;
+	int i;
+	struct usb_endpoint_descriptor *ep;
+	struct usb_endpoint_descriptor *ep_in = NULL;
+	struct usb_endpoint_descriptor *ep_out = NULL;
+	struct usb_endpoint_descriptor *ep_int = NULL;
+
+	/*
+	 * Find the first endpoint of each type we need.
+	 * We are expecting a minimum of 2 endpoints - in and out (bulk).
+	 * An optional interrupt-in is OK (necessary for CBI protocol).
+	 * We will ignore any others.
+	 */
+	for (i = 0; i < altsetting->desc.bNumEndpoints; i++) {
+		ep = &altsetting->endpoint[i].desc;
+
+		if (usb_endpoint_xfer_bulk(ep)) {
+			if (usb_endpoint_dir_in(ep)) {
+				if (!ep_in)
+					ep_in = ep;
+			} else {
+				if (!ep_out)
+					ep_out = ep;
+			}
+		}
+
+		else if (usb_endpoint_is_int_in(ep)) {
+			if (!ep_int)
+				ep_int = ep;
+		}
+	}
+
+	if (!ep_in || !ep_out || (us->protocol == USB_PR_CBI && !ep_int)) {
+		utils_device_dbg(us, "Endpoint sanity check failed! Rejecting dev.\n");
+		return -EIO;
+	}
+
+	/* Calculate and store the pipe values */
+	us->send_ctrl_pipe = usb_sndctrlpipe(us->pusb_dev, 0);
+	us->recv_ctrl_pipe = usb_rcvctrlpipe(us->pusb_dev, 0);
+	us->send_bulk_pipe = usb_sndbulkpipe(us->pusb_dev,
+		usb_endpoint_num(ep_out));
+	us->recv_bulk_pipe = usb_rcvbulkpipe(us->pusb_dev,
+		usb_endpoint_num(ep_in));
+	if (ep_int) {
+		us->recv_intr_pipe = usb_rcvintpipe(us->pusb_dev,
+			usb_endpoint_num(ep_int));
+		us->ep_bInterval = ep_int->bInterval;
+	}
+	return 0;
+}
+
 static stv01_usb_device_method_t s_device_info_manager = 
 {
     .get_info = get_device_info,
     .get_protocol = get_device_protocol,
-    .get_transport = get_device_transport
+    .get_transport = get_device_transport,
+    .get_pipes = get_device_pipes
 };
 
 EXPORT_PTR_V(stv01_usb_device_method_t, dim, &s_device_info_manager)
