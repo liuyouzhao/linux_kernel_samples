@@ -253,107 +253,6 @@ static void usb_stor_scan_dwork(struct work_struct *work)
 	clear_bit(US_FLIDX_SCAN_PENDING, &us->dflags);
 }
 
-static int usb_stor_reset_common(struct stv01_usb_data_s *us,
-		u8 request, u8 requesttype,
-		u16 value, u16 index, void *data, u16 size)
-{
-	int result;
-	int result2;
-
-	if (test_bit(US_FLIDX_DISCONNECTING, &us->dflags)) {
-		utils_device_dbg(us, "No reset during disconnect\n");
-		return -EIO;
-	}
-
-	result = usb_stor_control_msg(us, us->send_ctrl_pipe,
-			request, requesttype, value, index, data, size,
-			5*HZ);
-	if (result < 0) {
-		utils_device_dbg(us, "Soft reset failed: %d\n", result);
-		return result;
-	}
-
-	/* Give the device some time to recover from the reset,
-	 * but don't delay disconnect processing. */
-	wait_event_interruptible_timeout(us->delay_wait,
-			test_bit(US_FLIDX_DISCONNECTING, &us->dflags),
-			HZ*6);
-	if (test_bit(US_FLIDX_DISCONNECTING, &us->dflags)) {
-		utils_device_dbg(us, "Reset interrupted by disconnect\n");
-		return -EIO;
-	}
-
-	utils_device_dbg(us, "Soft reset: clearing bulk-in endpoint halt\n");
-	result = usb_stor_clear_halt(us, us->recv_bulk_pipe);
-
-	utils_device_dbg(us, "Soft reset: clearing bulk-out endpoint halt\n");
-	result2 = usb_stor_clear_halt(us, us->send_bulk_pipe);
-
-	/* return a result code based on the result of the clear-halts */
-	if (result >= 0)
-		result = result2;
-	if (result < 0)
-		utils_device_dbg(us, "Soft reset failed\n");
-	else
-		utils_device_dbg(us, "Soft reset done\n");
-	return result;
-}
-
-
-int usb_stor_Bulk_reset(struct stv01_usb_data_s *us)
-{
-	return usb_stor_reset_common(us, US_BULK_RESET_REQUEST, 
-				 USB_TYPE_CLASS | USB_RECIP_INTERFACE,
-				 0, us->ifnum, NULL, 0);
-}
-
-static void get_transport(struct stv01_usb_data_s *us)
-{
-	us->transport_name = "Bulk";
-	us->transport_command = usb_stor_Bulk_transport;
-	us->transport_reset = usb_stor_Bulk_reset;
-
-}
-
-/* Get the protocol settings */
-static void get_protocol(struct stv01_usb_data_s *us)
-{
-	switch (us->subclass) {
-	case USB_SC_RBC:
-		us->protocol_name = "Reduced Block Commands (RBC)";
-		us->protocol_command = usb_stor_transparent_scsi_command;
-		break;
-#if 1
-	case USB_SC_8020:
-		us->protocol_name = "8020i";
-		us->protocol_command = usb_stor_pad12_command;
-		us->max_lun = 0;
-		break;
-
-	case USB_SC_QIC:
-		us->protocol_name = "QIC-157";
-		us->protocol_command = usb_stor_pad12_command;
-		us->max_lun = 0;
-		break;
-
-	case USB_SC_8070:
-		us->protocol_name = "8070i";
-		us->protocol_command = usb_stor_pad12_command;
-		us->max_lun = 0;
-		break;
-#endif
-	case USB_SC_SCSI:
-		us->protocol_name = "Transparent SCSI";
-		us->protocol_command = usb_stor_transparent_scsi_command;
-		break;
-
-	case USB_SC_UFI:
-		us->protocol_name = "Uniform Floppy Interface (UFI)";
-		us->protocol_command = usb_stor_ufi_command;
-		break;
-	}
-}
-
 /* Associate our private data with the USB device */
 static int associate_dev(struct stv01_usb_data_s *us, struct usb_interface *intf)
 {
@@ -390,7 +289,6 @@ static int associate_dev(struct stv01_usb_data_s *us, struct usb_interface *intf
 static int usb_stor_probe1(     struct stv01_usb_data_s **pus,
 		                        struct usb_interface *intf,
 		                        const struct usb_device_id *id,
-		                        struct us_unusual_dev *unusual_dev,
 		                        struct scsi_host_template *sht)
 {
 	struct Scsi_Host *host;
@@ -428,14 +326,11 @@ static int usb_stor_probe1(     struct stv01_usb_data_s **pus,
 	if (result)
 		goto BadDevice;
 
-	/* Get the unusual_devs entries and the descriptors */
-	result = get_device_info(us, id, unusual_dev);
-	if (result)
-		goto BadDevice;
-
-	/* Get standard transport and protocol settings */
-	get_transport(us);
-	get_protocol(us);
+	/* Get the entries and the descriptors */
+    /* Get standard transport and protocol settings */
+    IPTR(dim)->get_info(us, id);
+    IPTR(dim)->get_protocol(us);
+	IPTR(dim)->get_transport(us);
 
 	/* Give the caller a chance to fill in specialized transport
 	 * or protocol settings.
@@ -507,21 +402,12 @@ static int get_pipes(struct stv01_usb_data_s *us)
 /* Initialize all the dynamic resources we need */
 static int usb_stor_acquire_resources(struct stv01_usb_data_s *us)
 {
-	int p;
 	struct task_struct *th;
 
 	us->current_urb = usb_alloc_urb(0, GFP_KERNEL);
 	if (!us->current_urb) {
 		utils_device_dbg(us, "URB allocation failed\n");
 		return -ENOMEM;
-	}
-
-	/* Just before we start our control thread, initialize
-	 * the device if it needs initialization */
-	if (us->unusual_dev->initFunction) {
-		p = us->unusual_dev->initFunction(us);
-		if (p)
-			return p;
 	}
 
 	/* Start up our control thread */
@@ -624,11 +510,9 @@ BadDevice:
 static int storage_probe(struct usb_interface *intf,
 			 const struct usb_device_id *id)
 {
-	struct us_unusual_dev *unusual_dev;
 	struct stv01_usb_data_s *us;
 	int result;
-	int size;
-    
+
     printk(KERN_INFO " storage_probe \n");
 
 	/* If uas is enabled and this device can do uas then ignore it. */
@@ -637,28 +521,9 @@ static int storage_probe(struct usb_interface *intf,
 		return -ENXIO;
 #endif
 
-	/*
-	 * Call the general probe procedures.
-	 *
-	 * The unusual_dev_list array is parallel to the usb_storage_usb_ids
-	 * table, so we use the index of the id entry to find the
-	 * corresponding unusual_devs entry.
-	 */
-
-	size = ARRAY_SIZE(us_unusual_dev_list);
-	if (id >= usb_storage_usb_ids && id < usb_storage_usb_ids + size) {
-		unusual_dev = (id - usb_storage_usb_ids) + us_unusual_dev_list;
-	} else {
-		unusual_dev = &for_dynamic_ids;
-
-		dev_dbg(&intf->dev, "Use Bulk-Only transport with the Transparent SCSI protocol for dynamic id: 0x%04x 0x%04x\n",
-			id->idVendor, id->idProduct);
-	}
-
     printk(KERN_INFO " ===================1 \n");
     
-	result = usb_stor_probe1(&us, intf, id, unusual_dev,
-				 &usb_stor_host_template);
+	result = usb_stor_probe1(&us, intf, id, &usb_stor_host_template);
     printk(KERN_INFO " ===================2 \n");
 
 	if (result)

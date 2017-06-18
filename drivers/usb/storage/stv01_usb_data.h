@@ -4,7 +4,6 @@
 #include <linux/usb.h>
 #include <scsi/scsi_host.h>
 
-struct us_unusual_dev;
 /** we allocate one of these for every device that we remember
 */
 typedef struct stv01_usb_data_s {
@@ -16,10 +15,6 @@ typedef struct stv01_usb_data_s {
 	struct mutex		dev_mutex;	 /* protect pusb_dev */
 	struct usb_device	*pusb_dev;	 /* this usb_device */
 	struct usb_interface	*pusb_intf;	 /* this interface */
-
-
-	struct us_unusual_dev   *unusual_dev;	 /* device-filter entry     */
-
 
 	unsigned long		fflags;		 /* fixed flags from filter */
 	unsigned long		dflags;		 /* dynamic atomic bitflags */
@@ -91,6 +86,17 @@ typedef struct stv01_usb_data_s {
 } stv01_usb_data_t;
 
 /* Convert between stv01_usb_data_s and the corresponding Scsi_Host */
+/*
+const stv01_usb_data_s *__mptr = (ptr);
+(struct Scsi_Host*)( (char *)__mptr - offsetof(stv01_usb_data_s)
+
+
+
+#define container_of(ptr, type, member) ({                      \
+        const typeof( ((type *)0)->member ) *__mptr = (ptr);    \
+        (type *)( (char *)__mptr - offsetof(type,member) );})
+
+*/
 static inline struct Scsi_Host *us_to_host(struct stv01_usb_data_s *us) {
 	return container_of((void *) us, struct Scsi_Host, hostdata);
 }

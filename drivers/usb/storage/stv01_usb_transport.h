@@ -12,8 +12,6 @@ struct stv01_usb_data_s;
 enum xfer_buf_dir	{TO_XFER_BUF, FROM_XFER_BUF};
 
 void usb_stor_invoke_transport(struct scsi_cmnd *srb, struct stv01_usb_data_s *us);
-void usb_stor_transparent_scsi_command(struct scsi_cmnd *srb,
-				       struct stv01_usb_data_s *us);
 int usb_stor_Bulk_transport(struct scsi_cmnd *srb, struct stv01_usb_data_s *us);
 int usb_stor_msg_common(struct stv01_usb_data_s *us, int timeout);
 unsigned int usb_stor_access_xfer_buf(unsigned char *buffer,
@@ -23,6 +21,10 @@ int usb_stor_clear_halt(struct stv01_usb_data_s *us, unsigned int pipe);
 int usb_stor_control_msg(struct stv01_usb_data_s *us, unsigned int pipe,
 		                         u8 request, u8 requesttype, u16 value, u16 index, 
 		                         void *data, u16 size, int timeout);
+int usb_stor_reset_common(struct stv01_usb_data_s *us,
+		                    u8 request, u8 requesttype,
+		                    u16 value, u16 index, void *data, u16 size);
+
 struct scsi_disk {
         struct scsi_driver *driver;     /* always &sd_template */
         struct scsi_device *device;

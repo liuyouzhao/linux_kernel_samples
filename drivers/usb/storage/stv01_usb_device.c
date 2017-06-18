@@ -1,81 +1,8 @@
 #include "stv01_usb_device.h"
+#include "stv01_usb_command.h"
+#include "stv01_usb_transport.h"
 #include "stv01_usb_data.h"
-#include "stv01_utils.h"
 #include <linux/utsname.h>
-
-#undef USUAL_DEV
-#define USUAL_DEV(use_protocol, use_transport) \
-{ \
-	.useProtocol = use_protocol,	\
-	.useTransport = use_transport,	\
-}
-struct us_unusual_dev us_unusual_dev_list[] = {
-    /* Control/Bulk transport for all SubClass values */
-    USUAL_DEV(USB_SC_RBC, USB_PR_CB),
-    USUAL_DEV(USB_SC_8020, USB_PR_CB),
-    USUAL_DEV(USB_SC_QIC, USB_PR_CB),
-    USUAL_DEV(USB_SC_UFI, USB_PR_CB),
-    USUAL_DEV(USB_SC_8070, USB_PR_CB),
-    USUAL_DEV(USB_SC_SCSI, USB_PR_CB),
-
-    /* Control/Bulk/Interrupt transport for all SubClass values */
-    USUAL_DEV(USB_SC_RBC, USB_PR_CBI),
-    USUAL_DEV(USB_SC_8020, USB_PR_CBI),
-    USUAL_DEV(USB_SC_QIC, USB_PR_CBI),
-    USUAL_DEV(USB_SC_UFI, USB_PR_CBI),
-    USUAL_DEV(USB_SC_8070, USB_PR_CBI),
-    USUAL_DEV(USB_SC_SCSI, USB_PR_CBI),
-
-    /* Bulk-only transport for all SubClass values */
-    USUAL_DEV(USB_SC_RBC, USB_PR_BULK),
-    USUAL_DEV(USB_SC_8020, USB_PR_BULK),
-    USUAL_DEV(USB_SC_QIC, USB_PR_BULK),
-    USUAL_DEV(USB_SC_UFI, USB_PR_BULK),
-    USUAL_DEV(USB_SC_8070, USB_PR_BULK),
-    USUAL_DEV(USB_SC_SCSI, USB_PR_BULK),
-	{ }		/* Terminating entry */
-};
-
-#undef USUAL_DEV
-#define USUAL_DEV(useProto, useTrans) \
-{ USB_INTERFACE_INFO(USB_CLASS_MASS_STORAGE, useProto, useTrans) }
-
-struct usb_device_id usb_storage_usb_ids[] = {
-     /* Control/Bulk transport for all SubClass values */
-    USUAL_DEV(USB_SC_RBC, USB_PR_CB),
-    USUAL_DEV(USB_SC_8020, USB_PR_CB),
-    USUAL_DEV(USB_SC_QIC, USB_PR_CB),
-    USUAL_DEV(USB_SC_UFI, USB_PR_CB),
-    USUAL_DEV(USB_SC_8070, USB_PR_CB),
-    USUAL_DEV(USB_SC_SCSI, USB_PR_CB),
-
-    /* Control/Bulk/Interrupt transport for all SubClass values */
-    USUAL_DEV(USB_SC_RBC, USB_PR_CBI),
-    USUAL_DEV(USB_SC_8020, USB_PR_CBI),
-    USUAL_DEV(USB_SC_QIC, USB_PR_CBI),
-    USUAL_DEV(USB_SC_UFI, USB_PR_CBI),
-    USUAL_DEV(USB_SC_8070, USB_PR_CBI),
-    USUAL_DEV(USB_SC_SCSI, USB_PR_CBI),
-
-    /* Bulk-only transport for all SubClass values */
-    USUAL_DEV(USB_SC_RBC, USB_PR_BULK),
-    USUAL_DEV(USB_SC_8020, USB_PR_BULK),
-    USUAL_DEV(USB_SC_QIC, USB_PR_BULK),
-    USUAL_DEV(USB_SC_UFI, USB_PR_BULK),
-    USUAL_DEV(USB_SC_8070, USB_PR_BULK),
-    USUAL_DEV(USB_SC_SCSI, USB_PR_BULK),
-	{ }		/* Terminating entry */
-};
-
-#undef USUAL_DEV
-
-#define USUAL_DEV(use_protocol, use_transport) \
-{ \
-	.useProtocol = use_protocol,	\
-	.useTransport = use_transport,	\
-}
-
-struct us_unusual_dev for_dynamic_ids = USUAL_DEV(USB_SC_SCSI, USB_PR_BULK);
 
 static char quirks[128];
 
@@ -181,80 +108,46 @@ static void usb_stor_adjust_quirks(struct usb_device *udev, unsigned long *fflag
 	*fflags = (*fflags & ~mask) | f;
 }
 
-/* Get the unusual_devs entries and the string descriptors */
-int get_device_info(struct stv01_usb_data_s *us, const struct usb_device_id *id,
-		struct us_unusual_dev *unusual_dev)
+int usb_stor_Bulk_reset(struct stv01_usb_data_s *us)
 {
-	struct usb_device *dev = us->pusb_dev;
-	struct usb_interface_descriptor *idesc =
-		&us->pusb_intf->cur_altsetting->desc;
-	struct device *pdev = &us->pusb_intf->dev;
+	return usb_stor_reset_common(us, US_BULK_RESET_REQUEST, 
+				 USB_TYPE_CLASS | USB_RECIP_INTERFACE,
+				 0, us->ifnum, NULL, 0);
+}
 
-	/* Store the entries */
-	us->unusual_dev = unusual_dev;
-	us->subclass = (unusual_dev->useProtocol == USB_SC_DEVICE) ?
-			idesc->bInterfaceSubClass :
-			unusual_dev->useProtocol;
-	us->protocol = (unusual_dev->useTransport == USB_PR_DEVICE) ?
-			idesc->bInterfaceProtocol :
-			unusual_dev->useTransport;
+/* Get the entries and the string descriptors */
+static int get_device_info( struct stv01_usb_data_s *us, const struct usb_device_id *id)
+{
+    us->subclass = USB_SC_SCSI;
+    us->protocol = USB_PR_BULK;
+    
 	us->fflags = id->driver_info;
 	usb_stor_adjust_quirks(us->pusb_dev, &us->fflags);
 
-	if (us->fflags & US_FL_IGNORE_DEVICE) {
-		dev_info(pdev, "device ignored\n");
-		return -ENODEV;
-	}
-
-	/*
-	 * This flag is only needed when we're in high-speed, so let's
-	 * disable it if we're in full-speed
-	 */
-	if (dev->speed != USB_SPEED_HIGH)
-		us->fflags &= ~US_FL_GO_SLOW;
-
-	if (us->fflags)
-		dev_info(pdev, "Quirks match for vid %04x pid %04x: %lx\n",
-				le16_to_cpu(dev->descriptor.idVendor),
-				le16_to_cpu(dev->descriptor.idProduct),
-				us->fflags);
-
-	/* Log a message if a non-generic unusual_dev entry contains an
-	 * unnecessary subclass or protocol override.  This may stimulate
-	 * reports from users that will help us remove unneeded entries
-	 * from the unusual_devs.h table.
-	 */
-	if (id->idVendor || id->idProduct) {
-		static const char *msgs[3] = {
-			"an unneeded SubClass entry",
-			"an unneeded Protocol entry",
-			"unneeded SubClass and Protocol entries"};
-		struct usb_device_descriptor *ddesc = &dev->descriptor;
-		int msg = -1;
-
-		if (unusual_dev->useProtocol != USB_SC_DEVICE &&
-			us->subclass == idesc->bInterfaceSubClass)
-			msg += 1;
-		if (unusual_dev->useTransport != USB_PR_DEVICE &&
-			us->protocol == idesc->bInterfaceProtocol)
-			msg += 2;
-		if (msg >= 0 && !(us->fflags & US_FL_NEED_OVERRIDE))
-			dev_notice(pdev, "This device "
-					"(%04x,%04x,%04x S %02x P %02x)"
-					" has %s in unusual_devs.h (kernel"
-					" %s)\n"
-					"   Please send a copy of this message to "
-					"<linux-usb@vger.kernel.org> and "
-					"<usb-storage@lists.one-eyed-alien.net>\n",
-					le16_to_cpu(ddesc->idVendor),
-					le16_to_cpu(ddesc->idProduct),
-					le16_to_cpu(ddesc->bcdDevice),
-					idesc->bInterfaceSubClass,
-					idesc->bInterfaceProtocol,
-					msgs[msg],
-					utsname()->release);
-	}
-
 	return 0;
 }
+
+/* Get the protocol settings */
+static void get_device_protocol(struct stv01_usb_data_s *us)
+{
+	us->protocol_name = "Transparent SCSI";
+	us->protocol_command = usb_stor_invoke_transport;
+}
+
+static void get_device_transport(struct stv01_usb_data_s *us)
+{
+	us->transport_name = "Bulk";
+	us->transport_command = usb_stor_Bulk_transport;
+	us->transport_reset = usb_stor_Bulk_reset;
+
+}
+
+static stv01_usb_device_method_t s_device_info_manager = 
+{
+    .get_info = get_device_info,
+    .get_protocol = get_device_protocol,
+    .get_transport = get_device_transport
+};
+
+EXPORT_PTR_V(stv01_usb_device_method_t, dim, &s_device_info_manager)
 

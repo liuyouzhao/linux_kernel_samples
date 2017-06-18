@@ -407,15 +407,11 @@ int show_info (struct seq_file *m, struct Scsi_Host *host)
 	/* print product, vendor, and serial number strings */
 	if (us->pusb_dev->manufacturer)
 		string = us->pusb_dev->manufacturer;
-	else if (us->unusual_dev->vendorName)
-		string = us->unusual_dev->vendorName;
 	else
 		string = "Unknown";
 	seq_printf(m, "       Vendor: %s\n", string);
 	if (us->pusb_dev->product)
 		string = us->pusb_dev->product;
-	else if (us->unusual_dev->productName)
-		string = us->unusual_dev->productName;
 	else
 		string = "Unknown";
 	seq_printf(m, "      Product: %s\n", string);

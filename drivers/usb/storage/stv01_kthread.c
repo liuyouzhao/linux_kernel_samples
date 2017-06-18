@@ -47,23 +47,13 @@ static void fill_inquiry_response(struct stv01_usb_data_s *us, unsigned char *da
 			      available from the device."). */
 	} else {
 		u16 bcdDevice = le16_to_cpu(us->pusb_dev->descriptor.bcdDevice);
-		int n;
 
         utils_device_dbg(us, "Check if need my faking giving\n");
-        if(us->unusual_dev == NULL || us->unusual_dev->vendorName == NULL)
-        {
-            utils_device_dbg(us, "Fake needed\n");
-            memcpy(data+8, "steven", 6);
-            memcpy(data+16, "stv01", 5);
-        }
-        else
-        {
-            utils_device_dbg(us, "No fake needed\n");
-		    n = strlen(us->unusual_dev->vendorName);
-		    memcpy(data+8, us->unusual_dev->vendorName, min(8, n));
-		    n = strlen(us->unusual_dev->productName);
-		    memcpy(data+16, us->unusual_dev->productName, min(16, n));
-        }
+   
+        utils_device_dbg(us, "Fake needed\n");
+        memcpy(data+8, "steven", 6);
+        memcpy(data+16, "stv01", 5);
+
 		data[32] = 0x30 + ((bcdDevice>>12) & 0x0F);
 		data[33] = 0x30 + ((bcdDevice>>8) & 0x0F);
 		data[34] = 0x30 + ((bcdDevice>>4) & 0x0F);

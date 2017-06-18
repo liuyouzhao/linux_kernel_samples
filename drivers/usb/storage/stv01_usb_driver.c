@@ -38,6 +38,12 @@ MODULE_DESCRIPTION("USB STV01 Linux Course Practising Registration Driver");
 
 /*
  * The table of devices
+#define USB_DEVICE_VER(vend, prod, lo, hi) \
+.match_flags = USB_DEVICE_ID_MATCH_DEVICE_AND_VERSION, \
+.idVendor = (vend), \
+.idProduct = (prod), \
+.bcdDevice_lo = (lo), \
+.bcdDevice_hi = (hi)
  */
 #undef USUAL_DEV
 #define UNUSUAL_DEV(id_vendor, id_product, bcdDeviceMin, bcdDeviceMax, \
@@ -46,6 +52,29 @@ MODULE_DESCRIPTION("USB STV01 Linux Course Practising Registration Driver");
 { USB_DEVICE_VER(id_vendor, id_product, bcdDeviceMin, bcdDeviceMax), \
   .driver_info = (flags) }
 
+/*
+usb_device_id attributes:
+/// which fields to match against?
+__u16           match_flags;
+/// Used for product specific matches; range is inclusive
+__u16           idVendor;
+__u16           idProduct;
+__u16           bcdDevice_lo;
+__u16           bcdDevice_hi;
+/// Used for device class matches
+__u8            bDeviceClass;
+__u8            bDeviceSubClass;
+__u8            bDeviceProtocol;
+/// Used for interface class matches
+__u8            bInterfaceClass;
+__u8            bInterfaceSubClass;
+__u8            bInterfaceProtocol;
+/// Used for vendor-specific interface matches
+__u8            bInterfaceNumber;
+/// not matched against
+kernel_ulong_t  driver_info
+        __attribute__((aligned(sizeof(kernel_ulong_t))));
+*/
 static struct usb_device_id stv01_usb_ids[] = {
     UNUSUAL_DEV( 0x125f, 0x317a, 0x0000, 0x9999, "steven", "stv01",
 		USB_SC_SCSI, USB_PR_SDDR55, NULL,

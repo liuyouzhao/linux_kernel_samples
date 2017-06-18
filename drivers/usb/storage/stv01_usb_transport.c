@@ -854,3 +854,49 @@ int usb_stor_clear_halt(struct stv01_usb_data_s *us, unsigned int pipe)
 	utils_device_dbg(us, "result = %d\n", result);
 	return result;
 }
+
+int usb_stor_reset_common(struct stv01_usb_data_s *us,
+		u8 request, u8 requesttype,
+		u16 value, u16 index, void *data, u16 size)
+{
+	int result;
+	int result2;
+
+	if (test_bit(US_FLIDX_DISCONNECTING, &us->dflags)) {
+		utils_device_dbg(us, "No reset during disconnect\n");
+		return -EIO;
+	}
+
+	result = usb_stor_control_msg(us, us->send_ctrl_pipe,
+			request, requesttype, value, index, data, size,
+			5*HZ);
+	if (result < 0) {
+		utils_device_dbg(us, "Soft reset failed: %d\n", result);
+		return result;
+	}
+
+	/* Give the device some time to recover from the reset,
+	 * but don't delay disconnect processing. */
+	wait_event_interruptible_timeout(us->delay_wait,
+			test_bit(US_FLIDX_DISCONNECTING, &us->dflags),
+			HZ*6);
+	if (test_bit(US_FLIDX_DISCONNECTING, &us->dflags)) {
+		utils_device_dbg(us, "Reset interrupted by disconnect\n");
+		return -EIO;
+	}
+
+	utils_device_dbg(us, "Soft reset: clearing bulk-in endpoint halt\n");
+	result = usb_stor_clear_halt(us, us->recv_bulk_pipe);
+
+	utils_device_dbg(us, "Soft reset: clearing bulk-out endpoint halt\n");
+	result2 = usb_stor_clear_halt(us, us->send_bulk_pipe);
+
+	/* return a result code based on the result of the clear-halts */
+	if (result >= 0)
+		result = result2;
+	if (result < 0)
+		utils_device_dbg(us, "Soft reset failed\n");
+	else
+		utils_device_dbg(us, "Soft reset done\n");
+	return result;
+}

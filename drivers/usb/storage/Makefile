@@ -1,8 +1,7 @@
 obj-m += stv01_usb.o
 stv01_usb-objs :=  stv01_usb_driver.o \
-		           stv01_usb_storage.o \
-	               stv01_usb_storage_impl.o \
-                   stv01_usb_command.o \
+		   stv01_usb_storage.o \
+	           stv01_usb_storage_impl.o \
                    stv01_usb_transport.o \
                    stv01_scsi_host.o \
                    stv01_kthread.o \

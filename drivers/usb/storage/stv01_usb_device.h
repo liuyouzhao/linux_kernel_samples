@@ -5,23 +5,26 @@
 #include <linux/usb_usual.h>
 #include <linux/usb/quirks.h>
 
+#include "stv01_utils.h"
+
 /*
  * Unusual device list definitions 
  */
 struct stv01_usb_data_s;
 
-struct us_unusual_dev {
-	const char* vendorName;
-	const char* productName;
-	__u8  useProtocol;
-	__u8  useTransport;
-	int (*initFunction)(struct stv01_usb_data_s *);
-};
+/**
+ * pm_message_t declared in linux/pm.h
+ * usb_interface declared in linux/usb.h
+*/
+typedef struct stv01_usb_device_method_s
+{
+    int (*get_info) ( struct stv01_usb_data_s *us,
+                      const struct usb_device_id *id );
+    void (*get_protocol)(struct stv01_usb_data_s *us);
+    void (*get_transport)(struct stv01_usb_data_s *us);
 
-extern struct us_unusual_dev us_unusual_dev_list[19];
-extern struct usb_device_id usb_storage_usb_ids[19];
-extern struct us_unusual_dev for_dynamic_ids;
+} stv01_usb_device_method_t;
 
-int get_device_info(struct stv01_usb_data_s *us, const struct usb_device_id *id,
-		struct us_unusual_dev *unusual_dev);
+EXTERN_PTR(stv01_usb_device_method_t, dim)
+
 #endif /// _STV01_USB_DEVICE_H_
