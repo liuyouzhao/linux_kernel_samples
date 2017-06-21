@@ -82,14 +82,23 @@ static void dissociate_dev(struct stv01_usb_data_s *us)
 }
 
 /* Release all our dynamic resources */
-static void usb_stor_release_resources(struct stv01_usb_data_s *us)
+static void release_resources(struct stv01_usb_data_s *us)
 {
 	/* Tell the control thread to exit.  The SCSI host must
 	 * already have been removed and the DISCONNECTING flag set
 	 * so that we won't accept any more commands.
 	 */
 	utils_device_dbg(us, "-- sending exit command to thread\n");
+
+    /**
+     * Why complete here? the kthread will be wakeup and try to go over
+     * then we call kthread_stop waiting util kthread actually gets finish.
+     */
 	complete(&us->cmnd_ready);
+
+    /* here wait for kthread stop
+     * kthread will set should_stop then waiting for the kthread over.
+    */
 	if (us->ctl_thread)
 		kthread_stop(us->ctl_thread);
 
@@ -108,7 +117,7 @@ static void usb_stor_release_resources(struct stv01_usb_data_s *us)
 /* Second stage of disconnect processing: deallocate all resources */
 static void release_everything(struct stv01_usb_data_s *us)
 {
-	usb_stor_release_resources(us);
+	release_resources(us);
 	dissociate_dev(us);
 
 	/* Drop our reference to the host; the SCSI core will free it
@@ -162,22 +171,6 @@ static int usb_storage_post_reset(struct usb_interface *iface)
 	return 0;
 }
 
-static unsigned int usb_stor_sg_tablesize(struct usb_interface *intf)
-{
-	struct usb_device *usb_dev = interface_to_usbdev(intf);
-
-	if (usb_dev->bus->sg_tablesize) {
-		return usb_dev->bus->sg_tablesize;
-	}
-	return SG_ALL;
-}
-
-/*
-static void us_set_lock_class(struct mutex *mutex,
-		struct usb_interface *intf)
-{
-}
-*/
 
 /* Determine what the maximum LUN supported is */
 static int usb_stor_Bulk_max_lun(struct stv01_usb_data_s *us)
@@ -284,29 +277,6 @@ static int associate_dev(struct stv01_usb_data_s *us, struct usb_interface *intf
 	return 0;
 }
 
-/* Initialize all the dynamic resources we need */
-static int usb_stor_acquire_resources(struct stv01_usb_data_s *us)
-{
-	struct task_struct *th;
-
-	us->current_urb = usb_alloc_urb(0, GFP_KERNEL);
-	if (!us->current_urb) {
-		utils_device_dbg(us, "URB allocation failed\n");
-		return -ENOMEM;
-	}
-
-	/* Start up our control thread */
-	th = kthread_run(stv01_kernel_thread, us, "usb-storage");
-	if (IS_ERR(th)) {
-		dev_warn(&us->pusb_intf->dev,
-				"Unable to start control thread\n");
-		return PTR_ERR(th);
-	}
-	us->ctl_thread = th;
-
-	return 0;
-}
-
 /* First part of general USB mass-storage probing */
 static int usb_stor_probe1(     struct stv01_usb_data_s **pus,
 		                        struct usb_interface *intf,
@@ -318,7 +288,7 @@ static int usb_stor_probe1(     struct stv01_usb_data_s **pus,
 	int result;
 
 	dev_info(&intf->dev, "STV01 USB Mass Storage device detected\n");
-
+    
 	/*
 	 * Ask the SCSI layer to allocate a host structure, with extra
 	 * space at the end for our private stv01_usb_data_s structure.
@@ -329,18 +299,35 @@ static int usb_stor_probe1(     struct stv01_usb_data_s **pus,
 		return -ENOMEM;
 	}
     printk(KERN_INFO " ===================1.1 \n");
-
+    
 	/*
 	 * Allow 16-byte CDBs and thus > 2TB
 	 */
 	host->max_cmd_len = 16;
-	host->sg_tablesize = usb_stor_sg_tablesize(intf);
+
+    /* Get sg tablesize from usb_interface, through device interface manager */
+	host->sg_tablesize = IPTR(dim)->get_sg_tablesize(intf);
+
 	*pus = us = host_to_us(host);
+
+    printk(KERN_INFO "Check us->fflags[position-1]: %lx  dflags: %lx\n", us->fflags, us->dflags);
+
+    /**
+     * (1) Init mutex for kthread, for push_dev
+     * The 2 threads are:
+     * kthread started in stv01_kthread.c,
+     * kernel called thread from USB-BUG
+    */
 	mutex_init(&(us->dev_mutex));
-	//us_set_lock_class(&us->dev_mutex, intf);
+
+    /**
+     * (2) init completion for 
+     */
 	init_completion(&us->cmnd_ready);
 	init_completion(&(us->notify));
+
 	init_waitqueue_head(&us->delay_wait);
+
 	INIT_DELAYED_WORK(&us->scan_dwork, usb_stor_scan_dwork);
 
 	/* Associate the stv01_usb_data_s structure with the USB device */
@@ -350,10 +337,12 @@ static int usb_stor_probe1(     struct stv01_usb_data_s **pus,
 
 	/* Get the entries and the descriptors */
     /* Get standard transport and protocol settings */
+    /* Commented by laogong, inside get_info, fflag be set to id->driver_info = 8, */
     IPTR(dim)->get_info(us, id);
     IPTR(dim)->get_protocol(us);
 	IPTR(dim)->get_transport(us);
-
+    printk(KERN_INFO "Check us->fflags[position-2]: %lx  dflags: %lx\n", us->fflags, us->dflags);
+    //utils_device_dbg(us, "Check us->fflags[position-2]: %x  dflags: %x\n", us->fflags, us->dflags);
 	/* Give the caller a chance to fill in specialized transport
 	 * or protocol settings.
 	 */
@@ -371,16 +360,13 @@ int usb_stor_probe2(struct stv01_usb_data_s *us)
 	int result;
 	struct device *dev = &us->pusb_intf->dev;
 
-	
+	//utils_device_dbg(us, "Check us->fflags[position-3]: %x  dflags: %x\n", us->fflags, us->dflags);
 	/* In the normal case there is only a single target */
 	us_to_host(us)->max_id = 1;
 
     us_to_host(us)->no_scsi2_lun_in_cdb = 1;
 	
-
-	/* fix for single-lun devices */
-	if (us->fflags & US_FL_SINGLE_LUN)
-		us->max_lun = 0;
+    printk(KERN_INFO "Check us->fflags[position-3]: %lx  dflags: %lx\n", us->fflags, us->dflags);
 
 	/* Find the endpoints and calculate pipe values */
 	result = IPTR(dim)->get_pipes(us);
@@ -395,7 +381,7 @@ int usb_stor_probe2(struct stv01_usb_data_s *us)
 		set_bit(US_FLIDX_REDO_READ10, &us->dflags);
 
 	/* Acquire all the other resources and add the host */
-	result = usb_stor_acquire_resources(us);
+	result = stv01_usb_kthread_run(us);
 	if (result)
 		goto BadDevice;
 	snprintf(us->scsi_name, sizeof(us->scsi_name), "usb-storage %s",

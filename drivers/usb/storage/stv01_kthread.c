@@ -71,6 +71,13 @@ int stv01_kernel_thread(void * __us)
 
 	for (;;) {
 		utils_device_dbg(us, "*** thread sleeping\n");
+
+        /**
+         * Other thread call complete(..) to let here out!
+         * There are 2 threads who will call complete function for waking up here.
+         * in stv01_scsi_host.c queuecommand_lck while finish enqueue a command, then bring here up, then call protocol_command
+         * in stv01_usb_storage.c while release_resource, first of all, it wakes here up, let this thread go over!
+        */
 		if (wait_for_completion_interruptible(&us->cmnd_ready))
 			break;
 
@@ -137,7 +144,7 @@ int stv01_kernel_thread(void * __us)
 			us->srb->result = SAM_STAT_GOOD;
 		}
 
-		/* we've got a command, let's do it! */
+		/* we've got a command from queuecommand_lck, let's do it! */
 		else {
 			us->protocol_command(us->srb, us);
 			usb_mark_last_busy(us->pusb_dev);
@@ -185,5 +192,28 @@ SkipForAbort:
 		schedule();
 	}
 	__set_current_state(TASK_RUNNING);
+	return 0;
+}
+
+/* Initialize all the dynamic resources we need, and run the crucial kthread */
+int stv01_usb_kthread_run(struct stv01_usb_data_s *us)
+{
+	struct task_struct *th;
+
+	us->current_urb = usb_alloc_urb(0, GFP_KERNEL);
+	if (!us->current_urb) {
+		utils_device_dbg(us, "URB allocation failed\n");
+		return -ENOMEM;
+	}
+
+	/* Start up our control thread */
+	th = kthread_run(stv01_kernel_thread, us, "usb-storage");
+	if (IS_ERR(th)) {
+		dev_warn(&us->pusb_intf->dev,
+				"Unable to start control thread\n");
+		return PTR_ERR(th);
+	}
+	us->ctl_thread = th;
+
 	return 0;
 }

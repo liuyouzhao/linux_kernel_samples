@@ -116,6 +116,7 @@ void usb_stor_report_device_reset(struct stv01_usb_data_s *us)
  *
  * This is used by the protocol layers to actually send the message to
  * the device and receive the response.
+ * Called in stv01_kthread.c, the main usb-storage kernel thread
  */
 void usb_stor_invoke_transport(struct scsi_cmnd *srb, struct stv01_usb_data_s *us)
 {

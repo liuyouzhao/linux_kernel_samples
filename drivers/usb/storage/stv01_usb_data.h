@@ -56,7 +56,7 @@ typedef struct stv01_usb_data_s {
 	char			scsi_name[32];	 /* scsi_host name	*/
 
 	/* control and bulk communications data */
-	struct urb		*current_urb;	 /* USB requests	 */
+	struct urb		*current_urb;	 /* USB requests block defined in usb.h */
 	struct usb_ctrlrequest	*cr;		 /* control requests	 */
 	struct usb_sg_request	current_sg;	 /* scatter-gather req.  */
 	unsigned char		*iobuf;		 /* I/O buffer		 */

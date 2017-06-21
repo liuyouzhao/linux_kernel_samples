@@ -197,12 +197,23 @@ static int get_device_pipes(struct stv01_usb_data_s *us)
 	return 0;
 }
 
+static unsigned int get_device_sg_tablesize(struct usb_interface *intf)
+{
+	struct usb_device *usb_dev = interface_to_usbdev(intf);
+
+	if (usb_dev->bus->sg_tablesize) {
+		return usb_dev->bus->sg_tablesize;
+	}
+	return SG_ALL;
+}
+
 static stv01_usb_device_method_t s_device_info_manager = 
 {
     .get_info = get_device_info,
     .get_protocol = get_device_protocol,
     .get_transport = get_device_transport,
-    .get_pipes = get_device_pipes
+    .get_pipes = get_device_pipes,
+    .get_sg_tablesize = get_device_sg_tablesize
 };
 
 EXPORT_PTR_V(stv01_usb_device_method_t, dim, &s_device_info_manager)

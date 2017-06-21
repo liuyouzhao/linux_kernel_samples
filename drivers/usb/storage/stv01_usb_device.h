@@ -23,6 +23,7 @@ typedef struct stv01_usb_device_method_s
     void (*get_protocol)    (struct stv01_usb_data_s *us);
     void (*get_transport)   (struct stv01_usb_data_s *us);
     int (*get_pipes)       (struct stv01_usb_data_s *us);
+    unsigned int (*get_sg_tablesize)  (struct usb_interface *intf);
 
 } stv01_usb_device_method_t;
 
